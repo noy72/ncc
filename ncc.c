@@ -3,32 +3,142 @@
 #include <stdlib.h>
 #include <string.h>
 
+
+typedef struct {
+	int ty;			// A type of token
+	int val;		// When ty is TK_NUM, numeric value
+	char *input;
+} Token;
+
 enum {
 	TK_NUM = 256,
 	TK_EOF,			// A token representing the end of input
 };
 
-typedef struct {
-	int ty;			// A type of token
-	int val;		// When ty is TK_NUM, the numeric value
-	char *input;	// Token string (for error message)
-} Token;
+enum {
+	ND_NUM = 256,	// A type of integer node
+};
+
+typedef struct Node {
+	int ty;				// Operator or ND_NUM
+	struct Node *lhs;	// Left side
+	struct Node *rhs;	// Right side
+	int val;			// Use only when ty is ND_NUM
+} Node;
+
+Node *expr();
 
 // Save the token string as the tokenized result in this array
 // It is assumed that no more than 100 tokens will come
 Token tokens[100];
+
+int pos;
+
+Node *new_node(int op, Node *lhs, Node *rhs) {
+	Node *node = malloc(sizeof(Node));
+	node->ty = op;
+	node->lhs = lhs;
+	node->rhs = rhs;
+	return node;
+}
+
+Node *new_node_num(int val) {
+	Node *node = malloc(sizeof(Node));
+	node->ty = ND_NUM;
+	node->val = val;
+	return node;
+}
+
+
+Node *term() {
+	if (tokens[pos].ty == TK_NUM) {
+		return new_node_num(tokens[pos++].val);
+	}
+
+	if (tokens[pos].ty == '(') {
+		pos++;
+		Node *node = expr();
+		if (tokens[pos].ty != ')'){
+			//error
+		}
+		pos++;
+		return node;
+	}
+
+	return NULL;
+}
+
+Node *mul() {
+	Node *lhs = term();
+	if (tokens[pos].ty == TK_EOF)  return lhs;
+	if (tokens[pos].ty == '*') {
+		pos++;
+		return new_node('*', lhs, mul());
+	}
+	if (tokens[pos].ty == '/') {
+		pos++;
+		return new_node('/', lhs, mul());
+	}
+
+	return lhs;
+}
+
+Node *expr() {
+	Node *lhs = mul();
+	if (tokens[pos].ty == TK_EOF)  return lhs;
+	if (tokens[pos].ty == '+') {
+		pos++;
+		return new_node('+', lhs, expr());
+	}
+	if (tokens[pos].ty == '-') {
+		pos++;
+		return new_node('-', lhs, expr());
+	}
+
+	return lhs;
+}
+
+void gen(Node *node) {
+	if (node->ty == ND_NUM) {
+		printf("	push %d\n", node->val);
+		return;
+	}
+
+	gen(node->lhs);
+	gen(node->rhs);
+
+	printf("	pop rdi\n");
+	printf("	pop rax\n");
+
+	switch (node->ty){
+		case '+':
+			printf("	add rax, rdi\n");
+			break;
+		case '-':
+			printf("	sub rax, rdi\n");
+			break;
+		case '*':
+			printf("	mul rdi\n");
+			break;
+		case '/':
+			printf("	mov rdx, 0\n");
+			printf("	div rdi\n");
+	}
+
+	printf("	push rax\n");
+}
 
 // split into tokens the string pointed by p and save.
 void tokenize(char *p){
 	int i = 0;
 	while (*p) {
 		// Skip space
-		if (*p == ' ') {
+		if (*p == ' ' ) {
 			p++;
 			continue;
 		}
 
-		if (*p == '+' || *p == '-') {
+		if (*p == '+' || *p == '-' || *p == '*' || *p == '/' || *p == '(' || *p == ')') {
 			tokens[i].ty = *p;
 			tokens[i].input = p;
 			i++;
@@ -70,40 +180,12 @@ int main(int argc, char **argv) {
 	printf(".global _main\n");
 	printf("_main:\n");
 
-	// Since the beginning of the expression must be a nubmer,
-	// check it and output the first mov instruction.
-	if (tokens[0].ty != TK_NUM) {
-		error(0);
-	}
+	// Code generation while descending AST
+	gen(expr());
 
-	printf("	mov rax, %d\n", tokens[0].val);
-
-	// Output assemblies while consuming the sequence of tokens `+ <number>` or `- <number>`
-	int i = 1;
-	while (tokens[i].ty != TK_EOF) {
-		if (tokens[i].ty == '+') {
-			i++;
-			if (tokens[i].ty != TK_NUM){
-				error(i);
-			}
-			printf("	add rax, %d\n", tokens[i].val);
-			i++;
-			continue;
-		}
-
-		if (tokens[i].ty == '-') {
-			i++;
-			if (tokens[i].ty != TK_NUM) {
-				error(i);
-			}
-			printf("	sub rax, %d\n", tokens[i].val);
-			i++;
-			continue;
-		}
-
-		error(i);
-	}
-
+	// The value of expression remains on the top of the stack
+	// Load it into RAX and use it as a return value from the function
+	printf("	pop rax\n");
 	printf("	ret\n");
 	return 0;
 }
